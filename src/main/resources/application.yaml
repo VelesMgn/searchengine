@@ -1,0 +1,38 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/search_engine?createDatabaseIfNotExist=true&serverTimezone=UTC&rewriteBatchedStatements=true&useSSL=false&requireSSL=false&allowPublicKeyRetrieval=true
+    username: *
+    password: *
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 20
+      connection-timeout: 45000
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQL8Dialect
+        jdbc.batch_size: 50
+        order_inserts: true
+        order_updates: true
+        generate_statistics: false
+
+indexing-settings:
+  sites:
+    - url: https://www.playback.ru
+      name: PlayBack.Ru
+    - url: https://www.metanit.com
+      name: Metanit
+    - url: https://nikoartgallery.com/
+      name: Gallery Art of Niko
+    - url: https://nopaper.ru/
+      name: NoPaper
+
+connection:
+  user_agent: Mozilla/5.0 (Windows; U; WindowsNT 5.1; en-US; rv1.8.1.6) Gecko/20070725 Firefox/2.0.0.6
+  referer: https://www.google.com
