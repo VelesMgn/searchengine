@@ -15,6 +15,7 @@ import searchengine.services.indexing.impl.parser.node.Node;
 import searchengine.services.indexing.impl.parser.PageCrawlerTask;
 import searchengine.services.indexing.impl.persistence.IndexingCoordinator;
 
+import java.util.Set;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -25,9 +26,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class IndexingServiceImpl implements IndexingService {
     private final static int FINAL_TASKS = 1;
 
-    private final ConcurrentHashMap<Long, ForkJoinPool> activePools = new ConcurrentHashMap<>();
+    private final ForkJoinPool commonPool = new ForkJoinPool(Runtime.getRuntime().availableProcessors());
     private final AtomicBoolean waitExecutorShutdown = new AtomicBoolean(false);
     private final AtomicBoolean stopRequested = new AtomicBoolean(false);
+    private final Set<Long> siteIdsForEnding = ConcurrentHashMap.newKeySet();
     private final AtomicInteger remainingTasks = new AtomicInteger();
 
     private final SitesListConfig sitesFromConfigFile;
@@ -64,15 +66,15 @@ public final class IndexingServiceImpl implements IndexingService {
         Site site = coordinator.getSiteFromListAndSave(siteFromList);
         Node root = new Node(config, site, site.getUrl());
         PageCrawlerTask task = new PageCrawlerTask(coordinator, stopRequested, root);
-        ForkJoinPool pool = new ForkJoinPool();
 
-        activePools.put(site.getId(), pool);
-        pool.invoke(task);
+        siteIdsForEnding.add(site.getId());
+        commonPool.invoke(task);
 
         countingCompletedThreadPools();
     }
 
     private void countingCompletedThreadPools() {
+        if (stopRequested.get()) return;
         remainingTasks.decrementAndGet();
 
         if(remainingTasks.get() == FINAL_TASKS) {
@@ -82,31 +84,31 @@ public final class IndexingServiceImpl implements IndexingService {
     }
 
     private void completeSiteIndexing() {
-        activePools.forEach((siteId, pool) -> {
+        siteIdsForEnding.forEach((siteId) -> {
             if(!Status.FAILED.equals(coordinator.getSiteById(siteId).getStatus())) {
                 coordinator.saveFinalSiteData(siteId, Status.INDEXED, "");
             }
         });
 
-        remainingTasks.decrementAndGet();
-        activePools.clear();
+        siteIdsForEnding.clear();
+        remainingTasks.set(0);
         log.info("Sites parsing took: {} seconds", (System.currentTimeMillis() - measuringCodeExecutionTime) / 1000);
     }
 
     @Override
     public boolean stopIndexing() {
-        if(activePools.isEmpty()) return false;
+        if(siteIdsForEnding.isEmpty()) return false;
 
         String info = "Indexing stopped by the user.";
         stopRequested.set(true);
 
-        activePools.forEach((siteId, pool) -> {
-            pool.shutdownNow();
+        siteIdsForEnding.forEach((siteId) -> {
             coordinator.saveFinalSiteData(siteId, Status.FAILED, info);
         });
+        commonPool.shutdownNow();
 
         shutdownSiteExecutorAsync();
-        activePools.clear();
+        siteIdsForEnding.clear();
         remainingTasks.set(0);
 
         log.info(info);
@@ -115,7 +117,7 @@ public final class IndexingServiceImpl implements IndexingService {
 
     @Override
     public boolean indexPage(String path) {
-        if(!activePools.isEmpty()) return false;
+        if(!siteIdsForEnding.isEmpty()) return false;
         if(path == null || path.isBlank()) return false;
 
         Site site = coordinator.getSite(path, sitesFromConfigFile);
